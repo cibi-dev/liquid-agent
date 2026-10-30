@@ -141,10 +141,15 @@ fn start_server(app_handle: &tauri::AppHandle) -> (Option<Child>, Option<JobGuar
         .resource_dir()
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
 
-    let candidates = [
+    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf()));
+    let exe_parent = exe_dir.as_ref().and_then(|p| p.parent().map(|p| p.to_path_buf()));
+
+    let mut candidates = vec![
         std::env::current_dir().unwrap_or_default(),
         resource_dir,
     ];
+    if let Some(d) = exe_dir { candidates.push(d); }
+    if let Some(p) = exe_parent { candidates.push(p); }
 
     let mut server_dir = std::env::current_dir().unwrap_or_default();
     for dir in &candidates {
