@@ -97,9 +97,10 @@ describe("2. Windows Shell Execution", () => {
   });
 
   it("verifies cwd option execution", async () => {
-    const targetDir = os.tmpdir();
+    const targetDir = fs.realpathSync(os.tmpdir());
     const result = await shell("(Get-Location).Path", { cwd: targetDir });
-    assert.strictEqual(result.trim().toLowerCase(), targetDir.toLowerCase());
+    const resolvedResult = fs.existsSync(result.trim()) ? fs.realpathSync(result.trim()) : result.trim();
+    assert.strictEqual(resolvedResult.toLowerCase(), targetDir.toLowerCase());
   });
 
   it("verifies AbortSignal cancellation handling", async () => {
