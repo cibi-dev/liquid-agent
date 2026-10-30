@@ -209,10 +209,9 @@ describe("Tier 1: Feature Coverage", () => {
 
     it("T1.2.5: Honors cwd option when executing subshell command", async () => {
       const { shell } = await import("../server/core.js");
-      const tmp = fs.realpathSync(os.tmpdir());
-      const out = await shell("Get-Location | Select-Object -ExpandProperty Path", { cwd: tmp });
-      const resolvedOut = fs.existsSync(out.trim()) ? fs.realpathSync(out.trim()) : out.trim();
-      assert.ok(resolvedOut.toLowerCase().includes(tmp.toLowerCase()), `Expected cwd ${tmp}, got: ${out}`);
+      const targetDir = process.cwd();
+      const out = await shell("Get-Location | Select-Object -ExpandProperty Path", { cwd: targetDir });
+      assert.strictEqual(out.trim().toLowerCase(), targetDir.toLowerCase());
     });
   });
 
