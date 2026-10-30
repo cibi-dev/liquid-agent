@@ -203,6 +203,9 @@ fn start_server(app_handle: &tauri::AppHandle) -> (Option<Child>, Option<JobGuar
 }
 
 fn stop_server(child_arc: &Arc<Mutex<Option<Child>>>, job_arc: &Arc<Mutex<Option<JobGuard>>>) {
+    if let Ok(mut lock) = job_arc.lock() {
+        let _ = lock.take();
+    }
     if let Ok(mut lock) = child_arc.lock() {
         if let Some(mut child) = lock.take() {
             log::info!("Terminating server child process PID {}", child.id());
@@ -210,18 +213,17 @@ fn stop_server(child_arc: &Arc<Mutex<Option<Child>>>, job_arc: &Arc<Mutex<Option
             let _ = child.wait();
         }
     }
-    if let Ok(mut lock) = job_arc.lock() {
-        let _ = lock.take();
-    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let server_child: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
     let server_child_clone = server_child.clone();
+    let server_child_on_close = server_child.clone();
 
     let job_guard: Arc<Mutex<Option<JobGuard>>> = Arc::new(Mutex::new(None));
     let job_guard_clone = job_guard.clone();
+    let job_guard_on_close = job_guard.clone();
 
     tauri::Builder::default()
         .manage(ServerState {
@@ -265,6 +267,7 @@ pub fn run() {
         })
         .on_window_event(move |window, event| {
             if let WindowEvent::CloseRequested { .. } = event {
+                stop_server(&server_child_on_close, &job_guard_on_close);
                 let app = window.app_handle();
                 app.exit(0);
             }
