@@ -1,5 +1,8 @@
 node_modules/
 web/dist/
+dist-native/
+src-tauri/target/
+src-tauri/gen/
 guardian/.venv/
 bridge/node_modules/
 __pycache__/

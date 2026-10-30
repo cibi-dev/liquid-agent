@@ -12,11 +12,19 @@ import { fileURLToPath } from "node:url";
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const HOME = os.homedir();
 
-export const DATA =
-  process.env.LIQUID_AGENT_HOME ??
-  (process.platform === "darwin"
-    ? path.join(HOME, "Library", "Application Support", "LiquidAgent")
-    : path.join(process.env.XDG_DATA_HOME ?? path.join(HOME, ".local", "share"), "liquid-agent"));
+export function resolveDataDir(env = process.env, platform = process.platform, home = env.USERPROFILE || env.HOME || HOME) {
+  if (env.LIQUID_AGENT_HOME) return path.resolve(env.LIQUID_AGENT_HOME);
+  if (platform === "darwin") {
+    return path.join(home, "Library", "Application Support", "LiquidAgent");
+  }
+  if (platform === "win32") {
+    const base = env.LOCALAPPDATA || path.join(home, "AppData", "Local");
+    return path.join(base, "LiquidAgent");
+  }
+  return path.join(env.XDG_DATA_HOME ?? path.join(home, ".local", "share"), "liquid-agent");
+}
+
+export const DATA = resolveDataDir();
 
 export const DIRS = {
   models: path.join(DATA, "models"),
@@ -203,13 +211,39 @@ export function run(cmd, args, { cwd, env, timeout = 600_000, signal } = {}) {
   });
 }
 
-/** zsh command for the shell tool. Never throws: failures come back as text the model can read. */
+export function resolvePlatformOpen(target, platform = process.platform) {
+  if (platform === "win32") {
+    return { cmd: "cmd.exe", args: ["/c", "start", "", target] };
+  }
+  if (platform === "darwin") {
+    return { cmd: "open", args: [target] };
+  }
+  return { cmd: "xdg-open", args: [target] };
+}
+
+/** Shell command for the shell tool. Never throws: failures come back as text the model can read. */
 export function shell(command, { cwd, timeout = 60_000, signal } = {}) {
   return new Promise((resolve) => {
-    const child = spawn("/bin/zsh", ["-lc", command], { cwd, signal });
+    const isWin = process.platform === "win32";
+    const child = isWin
+      ? spawn(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`,
+          ],
+          { cwd, signal }
+        )
+      : spawn("/bin/zsh", ["-lc", command], { cwd, signal });
     let out = "";
     const add = (d) => {
-      if (out.length < MAX_OUTPUT) out += d;
+      if (out.length < MAX_OUTPUT) {
+        const str = typeof d === "string" ? d : d.toString("utf8");
+        out += str.slice(0, MAX_OUTPUT - out.length);
+      }
     };
     child.stdout.on("data", add);
     child.stderr.on("data", add);

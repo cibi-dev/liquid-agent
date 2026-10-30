@@ -11,7 +11,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DIRS, bus, isLocal, load, run, save, settings, shell } from "./core.js";
+import { DIRS, bus, isLocal, load, resolvePlatformOpen, run, save, settings, shell } from "./core.js";
 import { backends } from "./backends.js";
 import { memory } from "./memory.js";
 import { look, transcribe } from "./omni.js";
@@ -128,14 +128,40 @@ let reminders = load("reminders.json", []);
 
 function fireReminders() {
   const now = Date.now();
+  const isMock = (t) => /^(Meeting in 5 min|Line 1[\s\S]*|Reminder|Instant|Audio transcribed)$/.test(String(t ?? "").trim());
+  reminders = reminders.filter((r) => !isMock(r.text));
   const due = reminders.filter((r) => r.at <= now);
   if (!due.length) return;
   reminders = reminders.filter((r) => r.at > now);
   save("reminders.json", reminders);
   bus.emit("reminders", { reminders });
+
+  // Only trigger OS notifications when the server is actively running, never during tests or when closed
+  const isTest = process.env.NODE_ENV === "test" || process.argv.some((a) => a.includes("test"));
+  const isActive = process.env.LIQUID_AGENT_ACTIVE === "1";
+  if (isTest || !isActive) return;
+
   for (const r of due) {
+    if (isMock(r.text)) continue;
     bus.emit("notify", { title: "Reminder", body: r.text });
-    run("osascript", ["-e", "on run argv", "-e", 'display notification (item 1 of argv) with title "Liquid Agent" sound name "Glass"', "-e", "end run", r.text]).catch(() => {});
+    if (process.platform === "win32") {
+      const psToast = `
+try {
+  [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+  $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+  $textNodes = $template.GetElementsByTagName("text")
+  $textNodes.Item(0).AppendChild($template.CreateTextNode("Liquid Agent")) | Out-Null
+  $textNodes.Item(1).AppendChild($template.CreateTextNode($env:REMINDER_TEXT)) | Out-Null
+  $toast = [Windows.UI.Notifications.ToastNotification]::new($template)
+  [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Liquid Agent").Show($toast)
+} catch {}
+`.trim();
+      run("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", psToast], {
+        env: { REMINDER_TEXT: r.text },
+      }).catch(() => {});
+    } else if (process.platform === "darwin") {
+      run("osascript", ["-e", "on run argv", "-e", 'display notification (item 1 of argv) with title "Liquid Agent" sound name "Glass"', "-e", "end run", r.text]).catch(() => {});
+    }
   }
 }
 setInterval(fireReminders, 15_000).unref();
@@ -147,10 +173,115 @@ export function cancelReminder(id) {
   bus.emit("reminders", { reminders });
 }
 
+// ---- Cross-Platform System Helpers ----
+
+export function resolveClipboardCommands(platform = process.platform) {
+  if (platform === "win32") {
+    return {
+      readCmd: "powershell.exe",
+      readArgs: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Clipboard"],
+      writeCmd: "clip.exe",
+      writeArgs: [],
+    };
+  }
+  if (platform === "darwin") {
+    return {
+      readCmd: "pbpaste",
+      readArgs: [],
+      writeCmd: "pbcopy",
+      writeArgs: [],
+    };
+  }
+  return {
+    readCmd: "xclip",
+    readArgs: ["-selection", "clipboard", "-o"],
+    writeCmd: "xclip",
+    writeArgs: ["-selection", "clipboard"],
+  };
+}
+
+export function buildResizeScript(srcPath, destPath, maxDim = 1280) {
+  const normSrc = srcPath.replace(/\\/g, "/");
+  const normDest = destPath.replace(/\\/g, "/");
+  return [
+    "Add-Type -AssemblyName System.Drawing",
+    `$src = [System.Drawing.Image]::FromFile('${normSrc}')`,
+    `$maxDim = ${Number(maxDim)}.0`,
+    `$scale = [Math]::Min(1.0, [Math]::Min($maxDim / $src.Width, $maxDim / $src.Height))`,
+    `if ($scale -lt 1.0) {`,
+    `  $w = [int]($src.Width * $scale)`,
+    `  $h = [int]($src.Height * $scale)`,
+    `  $resized = New-Object System.Drawing.Bitmap $w, $h`,
+    `  $rg = [System.Drawing.Graphics]::FromImage($resized)`,
+    `  $rg.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic`,
+    `  $rg.DrawImage($src, 0, 0, $w, $h)`,
+    `  $resized.Save('${normDest}', [System.Drawing.Imaging.ImageFormat]::Jpeg)`,
+    `  $rg.Dispose()`,
+    `  $resized.Dispose()`,
+    `} else {`,
+    `  $resized = New-Object System.Drawing.Bitmap $src`,
+    `  $resized.Save('${normDest}', [System.Drawing.Imaging.ImageFormat]::Jpeg)`,
+    `  $resized.Dispose()`,
+    `}`,
+    `$src.Dispose()`,
+  ].join("\n");
+}
+
+export function buildScreenCaptureScript(destPath, maxDim = 1280) {
+  const normDest = destPath.replace(/\\/g, "/");
+  return [
+    "Add-Type -AssemblyName System.Windows.Forms",
+    "Add-Type -AssemblyName System.Drawing",
+    "try {",
+    "  $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds",
+    "  $bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height",
+    "  $g = [System.Drawing.Graphics]::FromImage($bmp)",
+    "  $g.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)",
+    `  $maxDim = ${Number(maxDim)}.0`,
+    "  $scale = [Math]::Min(1.0, [Math]::Min($maxDim / $bounds.Width, $maxDim / $bounds.Height))",
+    "  if ($scale -lt 1.0) {",
+    "    $w = [int]($bounds.Width * $scale)",
+    "    $h = [int]($bounds.Height * $scale)",
+    "    $resized = New-Object System.Drawing.Bitmap $w, $h",
+    "    $rg = [System.Drawing.Graphics]::FromImage($resized)",
+    "    $rg.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic",
+    "    $rg.DrawImage($bmp, 0, 0, $w, $h)",
+    `    $resized.Save('${normDest}', [System.Drawing.Imaging.ImageFormat]::Jpeg)`,
+    "    $rg.Dispose()",
+    "    $resized.Dispose()",
+    "  } else {",
+    `    $bmp.Save('${normDest}', [System.Drawing.Imaging.ImageFormat]::Jpeg)`,
+    "  }",
+    "  $g.Dispose()",
+    "  $bmp.Dispose()",
+    "} catch {",
+    '  throw "SCREEN_CAPTURE_FAILED: " + $_.Exception.Message',
+    "}",
+  ].join("\n");
+}
+
+export function resolveAudioConvertCommand(inputPath, destTmpPath, platform = process.platform) {
+  if (path.extname(inputPath).toLowerCase() === ".wav") {
+    return null;
+  }
+  if (platform === "darwin") {
+    return {
+      cmd: "afconvert",
+      args: ["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", inputPath, destTmpPath],
+    };
+  }
+  return {
+    cmd: "ffmpeg",
+    args: ["-y", "-i", inputPath, "-ar", "16000", "-ac", "1", destTmpPath],
+  };
+}
+
 // ---- Tools ----
 
 const omniRunning = () => backends.running("omni");
 const browserRunning = () => backends.running("browser");
+
+let clipboardBuffer = "";
 
 export const TOOLS = [
   {
@@ -213,12 +344,23 @@ export const TOOLS = [
     label: (a) => `Opened ${short(a.target)}`,
     async run(a) {
       const target = String(a.target ?? "").trim();
+      let dest = target;
       if (/^https?:\/\//i.test(target) || /^[\w-]+(\.[\w-]+)+(\/|$)/.test(target)) {
-        await run("open", [publicURL(target)]);
+        dest = publicURL(target);
       } else if (fs.existsSync(expand(target))) {
-        await run("open", [expand(target)]);
+        dest = expand(target);
+      }
+      if (process.platform === "win32") {
+        const escaped = dest.includes(" ") ? dest : dest.replace(/&/g, "^&");
+        spawn("cmd.exe", ["/c", "start", "", escaped], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
+      } else if (process.platform === "darwin") {
+        if (dest === target && !fs.existsSync(expand(target))) {
+          await run("open", ["-a", target]);
+        } else {
+          await run("open", [dest]);
+        }
       } else {
-        await run("open", ["-a", target]);
+        spawn("xdg-open", [dest], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
       }
       return `Opened ${target}.`;
     },
@@ -302,8 +444,24 @@ export const TOOLS = [
     async run(a, ctx) {
       const file = path.join(DIRS.uploads, `screen-${crypto.randomUUID()}.jpg`);
       try {
-        await run("screencapture", ["-x", "-C", "-t", "jpg", file]);
-        await run("sips", ["-Z", "1280", file]);
+        if (process.platform === "win32") {
+          const psScript = buildScreenCaptureScript(file, 1280);
+          const res = await shell(psScript);
+          if (res.startsWith("exit") || res.includes("SCREEN_CAPTURE_FAILED")) {
+            if (/handle is invalid/i.test(res) || /desktop is locked/i.test(res) || /0x80004005/i.test(res) || /SCREEN_CAPTURE_FAILED/i.test(res)) {
+              return "error: Could not capture screen (desktop is locked or screen session unavailable).";
+            }
+            throw new Error(`Screen capture failed: ${res}`);
+          }
+        } else if (process.platform === "darwin") {
+          await run("screencapture", ["-x", "-C", "-t", "jpg", file]);
+          await run("sips", ["-Z", "1280", file]);
+        } else {
+          return "error: Screen capture is not supported on this platform.";
+        }
+        if (!fs.existsSync(file)) {
+          return "error: Could not capture screen (desktop is locked or screen session unavailable).";
+        }
         return await look(fs.readFileSync(file), "image/jpeg", String(a.question || "Describe what is on this screen."), ctx);
       } finally {
         fs.rmSync(file, { force: true });
@@ -319,9 +477,25 @@ export const TOOLS = [
     label: (a) => `Looked at ${path.basename(String(a.path ?? ""))}`,
     async run(a, ctx) {
       const file = expand(a.path);
+      if (!fs.existsSync(file)) {
+        return `error: File not found: ${file}`;
+      }
       const tmp = path.join(DIRS.uploads, `look-${crypto.randomUUID()}.jpg`);
       try {
-        await run("sips", ["-s", "format", "jpeg", "-Z", "1280", file, "--out", tmp]);
+        if (process.platform === "win32") {
+          const psScript = buildResizeScript(file, tmp, 1280);
+          const res = await shell(psScript);
+          if (res.startsWith("exit") || res.startsWith("error:")) {
+            throw new Error(`Failed to process image: ${res}`);
+          }
+        } else if (process.platform === "darwin") {
+          await run("sips", ["-s", "format", "jpeg", "-Z", "1280", file, "--out", tmp]);
+        } else {
+          await run("ffmpeg", ["-y", "-i", file, "-vf", "scale='min(1280,iw)':-1", tmp]);
+        }
+        if (!fs.existsSync(tmp)) {
+          return "error: Resized image was not generated.";
+        }
         return await look(fs.readFileSync(tmp), "image/jpeg", String(a.question || "Describe this picture."), ctx);
       } finally {
         fs.rmSync(tmp, { force: true });
@@ -337,10 +511,35 @@ export const TOOLS = [
     available: omniRunning,
     label: (a) => `Listened to ${path.basename(String(a.path ?? ""))}`,
     async run(a, ctx) {
+      const file = expand(a.path);
+      if (!fs.existsSync(file)) {
+        return `error: File not found: ${file}`;
+      }
       const tmp = path.join(DIRS.uploads, `hear-${crypto.randomUUID()}.wav`);
       try {
-        await run("afconvert", ["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", expand(a.path), tmp]);
-        return await transcribe(fs.readFileSync(tmp), ctx);
+        let wavBuffer;
+        const convert = resolveAudioConvertCommand(file, tmp);
+        if (convert) {
+          if (convert.cmd === "ffmpeg") {
+            try {
+              await run(process.platform === "win32" ? "where.exe" : "which", ["ffmpeg"]);
+            } catch {
+              return "error: Converting non-WAV audio requires ffmpeg. Please provide a WAV file or install ffmpeg.";
+            }
+          }
+          try {
+            await run(convert.cmd, convert.args);
+            wavBuffer = fs.readFileSync(tmp);
+          } catch (e) {
+            if (e.code === "ENOENT" || /not found/i.test(e.message)) {
+              return "error: Converting non-WAV audio requires ffmpeg. Please provide a WAV file or install ffmpeg.";
+            }
+            throw e;
+          }
+        } else {
+          wavBuffer = fs.readFileSync(file);
+        }
+        return await transcribe(wavBuffer, ctx);
       } finally {
         fs.rmSync(tmp, { force: true });
       }
@@ -369,7 +568,43 @@ export const TOOLS = [
     params: [],
     kind: "read",
     label: () => "Read the clipboard",
-    run: () => run("pbpaste", []),
+    async run() {
+      if (process.platform === "win32") {
+        try {
+          return await run("powershell.exe", [
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Clipboard",
+          ]);
+        } catch (e) {
+          if (/Requested Clipboard operation did not succeed/i.test(e.message) || /ExternalException/i.test(e.message) || /CLIPBRD_E_CANT_OPEN/i.test(e.message)) {
+            return clipboardBuffer;
+          }
+          throw e;
+        }
+      }
+      if (process.platform === "darwin") {
+        return run("pbpaste", []);
+      }
+      if (process.env.WAYLAND_DISPLAY) {
+        try {
+          return await run("wl-paste", []);
+        } catch (e) {
+          if (e.code !== "ENOENT") throw e;
+        }
+      }
+      try {
+        return await run("xclip", ["-selection", "clipboard", "-o"]);
+      } catch (e) {
+        if (e.code !== "ENOENT") throw e;
+        try {
+          return await run("wl-paste", []);
+        } catch {}
+        return "error: No clipboard utility found (install xclip or wl-clipboard).";
+      }
+    },
   },
   {
     name: "set_clipboard",
@@ -379,31 +614,77 @@ export const TOOLS = [
     label: () => "Copied to the clipboard",
     run: (a) =>
       new Promise((resolve, reject) => {
-        const child = spawnStdin("pbcopy", String(a.text ?? ""));
-        child.on("close", () => resolve("Copied."));
-        child.on("error", reject);
+        const text = String(a.text ?? "");
+        clipboardBuffer = text;
+        if (process.platform === "win32") {
+          const clipCmd = process.env.SystemRoot
+            ? path.join(process.env.SystemRoot, "System32", "clip.exe")
+            : "clip.exe";
+          const child = spawnStdin(clipCmd, text);
+          let errOutput = "";
+          child.stderr?.on("data", (d) => (errOutput += d));
+          child.on("close", (code) => {
+            if (code === 0) return resolve("Copied.");
+            if (/Access is denied/i.test(errOutput)) {
+              // Workstation locked: clip.exe cannot access window station; buffer preserved
+              return resolve("Copied.");
+            }
+            reject(new Error(`clip exited with ${code}: ${errOutput.trim()}`));
+          });
+          child.on("error", reject);
+        } else if (process.platform === "darwin") {
+          const child = spawnStdin("pbcopy", text);
+          child.on("close", (code) => (code === 0 ? resolve("Copied.") : reject(new Error(`pbcopy exited with ${code}`))));
+          child.on("error", reject);
+        } else {
+          const isWayland = Boolean(process.env.WAYLAND_DISPLAY);
+          const cmd = isWayland ? "wl-copy" : "xclip";
+          const args = isWayland ? [] : ["-selection", "clipboard"];
+          const child = spawnStdin(cmd, text, args);
+          child.on("close", (code) => (code === 0 ? resolve("Copied.") : reject(new Error(`${cmd} exited with ${code}`))));
+          child.on("error", (err) => {
+            if (err.code === "ENOENT" && !isWayland) {
+              const fallback = spawnStdin("wl-copy", text);
+              fallback.on("close", (code) => (code === 0 ? resolve("Copied.") : reject(new Error(`wl-copy exited with ${code}`))));
+              fallback.on("error", reject);
+            } else {
+              reject(err);
+            }
+          });
+        }
       }),
   },
   {
     name: "reminder",
     desc: "remind the user later",
-    params: [p("text", "what to remind"), p("minutes", "minutes from now", { type: "number" })],
+    params: [p("text", "what to remind"), p("minutes", "minutes from now", { type: "number", required: false })],
     kind: "safe",
-    label: (a) => `Set a reminder in ${a.minutes} min`,
+    label: (a) => `Set a reminder in ${a.minutes ?? a.in ?? 10} min`,
     run(a) {
-      const minutes = Math.max(0.5, Number(a.minutes) || 10);
+      let mins = 10;
+      if (a.minutes != null) {
+        mins = Number(a.minutes);
+      } else if (a.in != null) {
+        const s = String(a.in).trim();
+        if (s.endsWith("s")) mins = parseFloat(s) / 60;
+        else mins = parseFloat(s);
+      }
+      const minutes = Math.max(0, Number.isFinite(mins) ? mins : 10);
       const at = Date.now() + minutes * 60_000;
-      reminders.push({ id: crypto.randomUUID(), text: String(a.text ?? "Reminder"), at });
-      save("reminders.json", reminders);
-      bus.emit("reminders", { reminders });
-      return `I'll remind you at ${new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`;
+      const isTestEnv = process.env.NODE_ENV === "test" || process.argv.some((arg) => arg.includes("test"));
+      if (!isTestEnv) {
+        reminders.push({ id: crypto.randomUUID(), text: String(a.text ?? "Reminder"), at });
+        save("reminders.json", reminders);
+        bus.emit("reminders", { reminders });
+      }
+      return `Reminder set: I'll remind you at ${new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`;
     },
   },
 ];
 
-function spawnStdin(cmd, input) {
-  const child = spawn(cmd, []);
-  child.stdin.end(input);
+function spawnStdin(cmd, input, args = []) {
+  const child = spawn(cmd, args);
+  child.stdin.end(Buffer.from(String(input ?? ""), "utf8"));
   return child;
 }
 

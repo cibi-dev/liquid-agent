@@ -27,10 +27,10 @@ const STARTERS = [
     schedule: { enabled: false, time: "12:00", days: [0, 1, 2, 3, 4, 5, 6] },
   },
   {
-    name: "Check my Mac",
+    name: "Check my computer",
     icon: "gauge",
     color: "#22c55e",
-    prompt: "Check my Mac's health: free disk space, memory pressure, battery condition and uptime. Use shell commands, then explain the results simply.",
+    prompt: "Check my computer's health: free disk space, memory pressure, battery condition and uptime. Use shell commands, then explain the results simply.",
     schedule: { enabled: false, time: "09:00", days: [1] },
   },
 ];

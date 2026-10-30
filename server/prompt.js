@@ -27,7 +27,7 @@ export function systemPrompt({ tools, omni, query }) {
   const style = "Use Markdown when it helps: headings, lists, tables, fenced code blocks with a language, and $...$ or $$...$$ for math.";
   const toolLines = tools.length
     ? [
-        "Answer chat, math, writing, code and knowledge questions yourself; never search for something you can write or work out. Only when the request needs the Mac, files, the web or memory, reply with one call only:",
+        "Answer chat, math, writing, code and knowledge questions yourself; never search for something you can write or work out. Only when the request needs the computer, files, the web or memory, reply with one call only:",
         xmlCall("NAME", { ARG: "VALUE" }),
         "Tools:",
         ...tools.map(signature),
@@ -35,7 +35,7 @@ export function systemPrompt({ tools, omni, query }) {
       ]
     : ["Answer directly."];
   return [
-    `You are Liquid Agent, a private assistant running locally on the user's Mac. ${persona()}`,
+    `You are Liquid Agent, a private assistant running locally on the user's computer. ${persona()}`,
     style,
     ...toolLines,
     omni && "You can see and hear attachments.",
@@ -53,9 +53,10 @@ export function voiceInstructions(history = []) {
     .map((m) => `${m.role === "user" ? "User" : "You"}: ${String(m.content).replace(/\s+/g, " ").slice(0, 200)}`)
     .join("\n");
   return [
-    `You are Liquid Agent, a private voice assistant running locally on the user's Mac. ${persona()}`,
+    `You are Liquid Agent, a private voice assistant running locally on the user's computer. ${persona()}`,
+    "Always speak in the exact language the user addresses you in. If the user speaks in Spanish, answer in natural, native Spanish.",
     "You are speaking out loud. Answer in one or two short sentences with plain, natural words. Never use markdown, lists, symbols, emoji or code.",
-    "When the user asks you to do something on the Mac, with files, reminders or memory, call a tool, then say the result in a few words. For news, weather, prices or facts you aren't sure of, use web_search first.",
+    "When the user asks you to do something on the computer, with files, reminders or memory, call a tool, then say the result in a few words. For news, weather, prices or facts you aren't sure of, use web_search first.",
     `Now: ${now()}.`,
     memory.promptBlock(recent),
     recent && `Earlier in this chat:\n${recent}`,

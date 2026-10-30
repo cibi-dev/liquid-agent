@@ -1,0 +1,65 @@
+name: Build Windows Native App
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src-tauri/**'
+      - 'web/**'
+      - 'server/**'
+      - 'package.json'
+      - '.github/workflows/build-windows.yml'
+
+jobs:
+  build:
+    name: Build Native Windows Binary
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Run Unit Tests
+        run: npm test
+
+      - name: Build Tauri 2.0 Native Executable
+        run: npx tauri build --no-bundle
+
+      - name: Package Distributable Binaries
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "dist-native"
+          if (Test-Path "src-tauri/target/release/Liquid Agent.exe") {
+            Copy-Item "src-tauri/target/release/Liquid Agent.exe" "dist-native/"
+          } elseif (Test-Path "src-tauri/target/release/liquid-agent.exe") {
+            Copy-Item "src-tauri/target/release/liquid-agent.exe" "dist-native/Liquid Agent.exe"
+          }
+          if (Test-Path "src-tauri/target/release/WebView2Loader.dll") {
+            Copy-Item "src-tauri/target/release/WebView2Loader.dll" "dist-native/"
+          }
+          Get-ChildItem -Path "dist-native"
+
+      - name: Upload Native Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Liquid-Agent-Windows-x64
+          path: dist-native/*
+          if-no-files-found: error

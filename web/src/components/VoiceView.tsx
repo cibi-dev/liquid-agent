@@ -191,7 +191,7 @@ export function VoiceView({ chatId }: { chatId?: string }) {
             "LFM3 Omni 2B is loading. This takes a few seconds."
           ) : (
             <>
-              Voice uses LFM3 Omni 2B, which listens and talks on your Mac. Nothing leaves it.
+              Voice uses LFM3 Omni 2B, which listens and talks on your computer. Nothing leaves it.
               <button className="btn primary" onClick={() => useStore.setState({ settingsOpen: "downloads" })}>
                 Set it up
               </button>
@@ -206,7 +206,7 @@ export function VoiceView({ chatId }: { chatId?: string }) {
 
   return (
     <div className="page voice">
-      <TopBar title="Voice chat" right={<span className="pill pill-muted">LFM3 Omni 2B · on this Mac</span>} />
+      <TopBar title="Voice chat" right={<span className="pill pill-muted">LFM3 Omni 2B · on this computer</span>} />
       <div className="voice-stage">
         <div ref={orb} className={cx("orb", `phase-${phase}`, muted && "muted")}>
           <div className="orb-glow" />

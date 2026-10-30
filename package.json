@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "A private AI agent for your Mac that runs LFM3 1.7B and LFM3 Omni 2B locally, with a web UI.",
+  "description": "A private AI agent for your computer that runs LFM3 1.7B and LFM3 Omni 2B locally, with a web UI.",
   "license": "MIT",
   "engines": {
     "node": ">=20"
@@ -13,12 +13,18 @@
     "start": "node server/index.js --open",
     "serve": "node server/index.js",
     "dev": "vite build --watch --mode development & node --watch-path=server server/index.js",
-    "typecheck": "tsc --noEmit -p web"
+    "test": "node --test tests/**/*.js",
+    "typecheck": "tsc --noEmit -p web",
+    "tauri": "tauri",
+    "build:native": "vite build && tauri build",
+    "dev:native": "tauri dev"
   },
   "dependencies": {
     "ws": "8.18.0"
   },
   "devDependencies": {
+    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/cli": "^2.12.4",
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
     "@vitejs/plugin-react": "4.3.3",

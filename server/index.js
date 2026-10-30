@@ -226,7 +226,12 @@ route("POST", "/api/parts/(\\w+)/start", (_, [id]) => {
 });
 route("POST", "/api/parts/(\\w+)/stop", (_, [id]) => backends.stop(id));
 route("POST", "/api/reveal", async () => {
-  spawn("open", [DATA]).on("error", () => {});
+  if (process.platform === "win32") {
+    spawn("cmd.exe", ["/c", "start", "", DATA], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
+  } else {
+    const cmd = process.platform === "darwin" ? "open" : "xdg-open";
+    spawn(cmd, [DATA], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
+  }
 });
 
 function notFound() {
@@ -317,8 +322,12 @@ server.on("upgrade", (req, socket, head) => {
 
 function openBrowser() {
   const url = `http://127.0.0.1:${PORT}`;
-  const cmd = process.platform === "darwin" ? "open" : "xdg-open";
-  spawn(cmd, [url], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
+  if (process.platform === "win32") {
+    spawn("cmd.exe", ["/c", "start", "", url], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
+  } else {
+    const cmd = process.platform === "darwin" ? "open" : "xdg-open";
+    spawn(cmd, [url], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
+  }
 }
 
 server.on("error", async (e) => {
@@ -337,6 +346,7 @@ server.on("error", async (e) => {
 });
 
 server.listen(PORT, HOST, () => {
+  process.env.LIQUID_AGENT_ACTIVE = "1";
   console.log(`Liquid Agent is running at http://127.0.0.1:${PORT}`);
   console.log(`Data: ${DATA}`);
   if (process.argv.includes("--open")) openBrowser();
@@ -352,6 +362,7 @@ let stopping = false;
 function shutdown() {
   if (stopping) return;
   stopping = true;
+  delete process.env.LIQUID_AGENT_ACTIVE;
   backends.stopAll();
   flushAll();
   server.close();

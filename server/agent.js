@@ -324,7 +324,7 @@ export const agent = {
     const mode = settings.approvalMode;
     const ask = (reason) => this.askUser(chat, step, reason, signal);
     if (tool?.free) return { approved: true, decision: "Automatic" };
-    if (hardDeny(step.tool, step.args)) return ask("This command can change important parts of your Mac.");
+    if (hardDeny(step.tool, step.args)) return ask("This command can change important parts of your computer.");
     if (mode === "askAlways") return ask();
     if (mode === "fullAuto") return { approved: true, decision: "Full Auto" };
     if (tool.kind !== "write") return { approved: true, decision: tool.kind === "read" ? "Read-only, safe" : "Safe" };

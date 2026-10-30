@@ -121,7 +121,7 @@ export const memory = {
         {
           role: "system",
           content:
-            "You suggest things a personal AI agent on a Mac could do for this user right now. It can chat, search the web, use files and apps, set reminders, browse websites and see the screen. Write exactly 4 lines, each 'Short title | the full request the user would type', like 'Tidy Downloads | Sort the files in my Downloads folder into folders by type'. No numbering, nothing else.",
+            "You suggest things a personal AI agent on a computer could do for this user right now. It can chat, search the web, use files and apps, set reminders, browse websites and see the screen. Write exactly 4 lines, each 'Short title | the full request the user would type', like 'Tidy Downloads | Sort the files in my Downloads folder into folders by type'. No numbering, nothing else.",
         },
         { role: "user", content: `What I know about the user: ${known}` },
       ],

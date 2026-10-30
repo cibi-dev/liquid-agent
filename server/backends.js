@@ -10,7 +10,7 @@ import { DATA, DIRS, QUANTS, ROOT, bus, bytesText, load, run, save, settings, sl
 export const PARTS = {
   engine: {
     title: "AI engine",
-    detail: "Runs the models on your Mac (latest llama.cpp).",
+    detail: "Runs the models on your computer (latest llama.cpp).",
     size: "about 30 MB",
     bytes: 0.03e9,
   },
@@ -60,8 +60,27 @@ const weights = (id) => model(weightsFile(id));
 const gb = (bytes) => `${(bytes / 1e9).toFixed(1)} GB`;
 const marker = (dir) => path.join(dir, ".ready");
 
+/** Unpacks an archive (.zip or .tar.gz) cleanly across platforms */
+export async function unpackArchive(archivePath, destDir, { signal } = {}) {
+  fs.mkdirSync(destDir, { recursive: true });
+  if (process.platform === "win32") {
+    if (archivePath.endsWith(".zip")) {
+      try {
+        await run("tar", ["-xf", archivePath, "-C", destDir], { signal });
+      } catch {
+        await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Expand-Archive -Path '${archivePath}' -DestinationPath '${destDir}' -Force`], { signal });
+      }
+    } else {
+      await run("tar", ["-xzf", archivePath, "-C", destDir], { signal });
+    }
+  } else {
+    await run("tar", ["-xzf", archivePath, "-C", destDir], { signal });
+  }
+}
+
 /** Finds the llama-server inside the app's own engine folder. */
-function findEngine() {
+export function findEngine() {
+  const binaryName = process.platform === "win32" ? "llama-server.exe" : "llama-server";
   const stack = [DIRS.engine];
   while (stack.length) {
     const dir = stack.pop();
@@ -74,7 +93,7 @@ function findEngine() {
     for (const e of entries) {
       const full = path.join(dir, e.name);
       if (e.isDirectory()) stack.push(full);
-      else if (e.name === "llama-server") return full;
+      else if (e.name.toLowerCase() === binaryName.toLowerCase()) return full;
     }
   }
   return null;
@@ -335,15 +354,60 @@ class Backends {
     });
     if (!res.ok) throw new Error(`Couldn't reach GitHub (HTTP ${res.status}).`);
     const releases = await res.json();
-    const asset = releases.flatMap((r) => r.assets ?? []).find((a) => a.name.endsWith(ENGINE_ASSET));
-    if (!asset) throw new Error("No llama.cpp build for this computer was found.");
-    const archive = path.join(DIRS.tools, "llama.tar.gz");
-    await download(asset.browser_download_url, archive, { signal, onProgress: this.progress("engine", "Downloading") });
-    this.set("engine", { status: "installing", text: "Unpacking…" });
+    const allAssets = releases.flatMap((r) => r.assets ?? []);
+
+    let mainAsset = null;
+    let cudartAsset = null;
+
+    if (process.platform === "win32") {
+      // Prioritize CUDA 13.4 / 12.4 for NVIDIA RTX GPUs, then Vulkan, then CPU
+      const isBin = (a) => !a.name.startsWith("cudart");
+      mainAsset = allAssets.find((a) => isBin(a) && a.name.includes("bin-win-cuda-13.4-x64.zip")) ||
+                  allAssets.find((a) => isBin(a) && a.name.includes("bin-win-cuda-12.4-x64.zip")) ||
+                  allAssets.find((a) => isBin(a) && a.name.includes("bin-win-cuda") && a.name.endsWith("x64.zip")) ||
+                  allAssets.find((a) => isBin(a) && a.name.includes("bin-win-vulkan-x64.zip")) ||
+                  allAssets.find((a) => isBin(a) && a.name.includes("bin-win-cpu-x64.zip"));
+
+      if (mainAsset && mainAsset.name.includes("cuda")) {
+        const cudaVer = mainAsset.name.includes("13.4") ? "13.4" : "12.4";
+        cudartAsset = allAssets.find((a) => a.name.startsWith("cudart-llama") && a.name.includes(`win-cuda-${cudaVer}-x64.zip`)) ||
+                      allAssets.find((a) => a.name.startsWith("cudart-llama") && a.name.includes("win-cuda") && a.name.endsWith("x64.zip"));
+      }
+    } else {
+      mainAsset = allAssets.find((a) => a.name.endsWith(ENGINE_ASSET));
+    }
+
+    if (!mainAsset) throw new Error("No llama.cpp build for this computer was found.");
+
     fs.rmSync(DIRS.engine, { recursive: true, force: true });
     fs.mkdirSync(DIRS.engine, { recursive: true });
-    await run("tar", ["-xzf", archive, "-C", DIRS.engine], { signal });
-    fs.rmSync(archive, { force: true });
+
+    if (process.platform === "win32") {
+      const archive = path.join(DIRS.tools, "llama.zip");
+      await download(mainAsset.browser_download_url, archive, { signal, onProgress: this.progress("engine", "Downloading") });
+      this.set("engine", { status: "installing", text: "Unpacking…" });
+      await unpackArchive(archive, DIRS.engine, { signal });
+      fs.rmSync(archive, { force: true });
+
+      if (cudartAsset) {
+        const cudartArchive = path.join(DIRS.tools, "cudart.zip");
+        try {
+          await download(cudartAsset.browser_download_url, cudartArchive, { signal, onProgress: this.progress("engine", "Downloading CUDA runtime") });
+          await unpackArchive(cudartArchive, DIRS.engine, { signal });
+        } catch (e) {
+          console.warn("[backends] cudart download skipped or failed:", e.message);
+        } finally {
+          fs.rmSync(cudartArchive, { force: true });
+        }
+      }
+    } else {
+      const archive = path.join(DIRS.tools, "llama.tar.gz");
+      await download(mainAsset.browser_download_url, archive, { signal, onProgress: this.progress("engine", "Downloading") });
+      this.set("engine", { status: "installing", text: "Unpacking…" });
+      await run("tar", ["-xzf", archive, "-C", DIRS.engine], { signal });
+      fs.rmSync(archive, { force: true });
+    }
+
     if (!findEngine()) throw new Error("The download didn't contain llama-server.");
   }
 
@@ -356,16 +420,36 @@ class Backends {
   }
 
   async ensureUV(signal) {
-    const uv = path.join(DIRS.tools, "uv", "uv");
+    const binaryName = process.platform === "win32" ? "uv.exe" : "uv";
+    const uv = path.join(DIRS.tools, "uv", binaryName);
     if (fs.existsSync(uv)) return uv;
+    fs.mkdirSync(path.dirname(uv), { recursive: true });
+
+    if (process.platform === "win32") {
+      const archive = path.join(DIRS.tools, "uv.zip");
+      await download("https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip", archive, {
+        signal,
+        onProgress: this.progress("guardian", "Getting Python tools"),
+      });
+      await unpackArchive(archive, path.dirname(uv), { signal });
+      fs.rmSync(archive, { force: true });
+      if (!fs.existsSync(uv)) {
+        const found = fs.readdirSync(path.dirname(uv), { recursive: true }).find((f) => path.basename(f) === "uv.exe");
+        if (found) {
+          const fullFound = path.join(path.dirname(uv), found);
+          if (fullFound !== uv) fs.copyFileSync(fullFound, uv);
+        }
+      }
+      return uv;
+    }
+
     const triple = `${ARCH === "arm64" ? "aarch64" : "x86_64"}-${process.platform === "darwin" ? "apple-darwin" : "unknown-linux-gnu"}`;
     const archive = path.join(DIRS.tools, "uv.tar.gz");
     await download(`https://github.com/astral-sh/uv/releases/latest/download/uv-${triple}.tar.gz`, archive, {
       signal,
       onProgress: this.progress("guardian", "Getting Python tools"),
     });
-    fs.mkdirSync(path.dirname(uv), { recursive: true });
-    await run("tar", ["-xzf", archive, "-C", path.dirname(uv), "--strip-components=1"], { signal });
+    await run("tar", ["-xzf", archive, "-C", destDir, "--strip-components=1"], { signal });
     fs.rmSync(archive, { force: true });
     return uv;
   }
@@ -373,17 +457,18 @@ class Backends {
   async installGuardian(signal) {
     const uv = await this.ensureUV(signal);
     const venv = path.join(DIRS.guardian, ".venv");
+    const pythonBin = path.join(venv, process.platform === "win32" ? "Scripts" : "bin", process.platform === "win32" ? "python.exe" : "python");
     const env = this.pythonEnv;
     this.set("guardian", { status: "installing", text: "Setting up a private Python…" });
     await run(uv, ["venv", "--allow-existing", "--python", "3.12", venv], { env, signal });
     this.set("guardian", { status: "installing", text: "Installing the safety model's tools (the slow part)…" });
-    await run(uv, ["pip", "install", "--python", path.join(venv, "bin", "python"), "-r", path.join(ROOT, "guardian", "requirements.txt")], {
+    await run(uv, ["pip", "install", "--python", pythonBin, "-r", path.join(ROOT, "guardian", "requirements.txt")], {
       env,
       signal,
       timeout: 1_800_000,
     });
     this.set("guardian", { status: "installing", text: "Downloading Auto 200M…" });
-    await run(path.join(venv, "bin", "python"), ["-I", path.join(ROOT, "guardian", "server.py"), "--download-only"], {
+    await run(pythonBin, ["-I", path.join(ROOT, "guardian", "server.py"), "--download-only"], {
       env,
       signal,
       timeout: 900_000,
@@ -394,7 +479,11 @@ class Backends {
   get nodeEnv() {
     const bin = path.dirname(process.execPath);
     // Betterwright keeps its browser and profile with the rest of our files, so Remove removes them.
-    return { PATH: `${bin}:${process.env.PATH}`, npm_config_cache: path.join(DIRS.tools, "npm-cache"), BETTERWRIGHT_HOME: path.join(DIRS.bridge, "home") };
+    return {
+      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      npm_config_cache: path.join(DIRS.tools, "npm-cache"),
+      BETTERWRIGHT_HOME: path.join(DIRS.bridge, "home"),
+    };
   }
 
   async installBrowser(signal) {
@@ -485,7 +574,7 @@ class Backends {
       }
       case "guardian":
         return {
-          cmd: path.join(DIRS.guardian, ".venv", "bin", "python"),
+          cmd: path.join(DIRS.guardian, ".venv", process.platform === "win32" ? "Scripts" : "bin", process.platform === "win32" ? "python.exe" : "python"),
           args: ["-I", path.join(ROOT, "guardian", "server.py"), "--port", port],
           cwd: DIRS.guardian,
           env: { ...this.pythonEnv, HF_HUB_OFFLINE: "1" },
@@ -503,8 +592,14 @@ class Backends {
 
   async start(id) {
     if (id === "engine" || this.procs[id] || this.launching.has(id) || !this.installed(id)) return;
+    if ((id === "small" || id === "omni") && !this.installed("engine")) {
+      await this.install(["engine"]);
+    }
     const spec = this.command(id);
-    if (!spec) return;
+    if (!spec) {
+      this.set(id, { status: "failed", error: "The AI engine (llama-server) is not installed. Click Get next to AI engine in Settings → Downloads." });
+      return;
+    }
     const port = PARTS[id].port;
     this.launching.add(id);
     const free = await this.freePort(port).finally(() => this.launching.delete(id));
@@ -565,6 +660,38 @@ class Backends {
 
   /** Frees a port held by a leftover copy of our own servers. Never touches anything else. */
   async freePort(port) {
+    if (process.platform === "win32") {
+      let pids = [];
+      try {
+        const out = await run("powershell.exe", [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique`,
+        ]);
+        pids = out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      } catch {
+        return true;
+      }
+      for (const pid of pids) {
+        if (!pid || pid === "0") continue;
+        let cmdline = "";
+        try {
+          cmdline = await run("powershell.exe", [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`,
+          ]);
+        } catch {}
+        if (!cmdline || !cmdline.includes(DATA)) continue;
+        try {
+          await run("taskkill", ["/F", "/PID", pid]);
+        } catch {}
+      }
+      await sleep(600);
+      return true;
+    }
     let pids = [];
     try {
       pids = (await run("lsof", ["-t", `-iTCP:${port}`, "-sTCP:LISTEN"])).split("\n").filter(Boolean);
@@ -593,7 +720,7 @@ class Backends {
 function friendly(e) {
   const text = String(e?.message ?? e);
   if (/ENOTFOUND|EAI_AGAIN|fetch failed|ECONNRESET/i.test(text)) return "Couldn't reach the internet. Check your Wi-Fi, then click Try again.";
-  if (/ENOSPC/i.test(text)) return "Your Mac is out of disk space. Free some space, then click Try again.";
+  if (/ENOSPC/i.test(text)) return "Your computer is out of disk space. Free some space, then click Try again.";
   return text.slice(0, 300);
 }
 
@@ -606,7 +733,7 @@ function reasonFromLog(file, port) {
   if (tail.includes("unknown model architecture")) return "The AI engine is too old for this model. Remove the AI engine, then download it again.";
   if (tail.includes("address already in use") || tail.includes("couldn't bind")) return `Something else is using port ${port}. Quit it, then click Try again.`;
   if (tail.includes("failed to load model") || tail.includes("error loading model")) return "The model file looks damaged. Remove it, then download it again.";
-  if (tail.includes("out of memory") || tail.includes("failed to allocate")) return "Your Mac ran out of memory. Close some apps, then click Try again.";
+  if (tail.includes("out of memory") || tail.includes("failed to allocate")) return "Your computer ran out of memory. Close some apps, then click Try again.";
   return "It stopped unexpectedly. Click Try again; details are in the logs folder.";
 }
 

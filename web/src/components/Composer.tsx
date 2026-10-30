@@ -322,7 +322,7 @@ export function Composer({ chat, autoFocus }: { chat?: Chat; autoFocus?: boolean
             ref={area}
             value={text}
             rows={1}
-            placeholder={chat?.messages.length ? "Reply to Liquid Agent…" : "Ask anything, or tell me what to do on your Mac"}
+            placeholder={chat?.messages.length ? "Reply to Liquid Agent…" : "Ask anything, or tell me what to do on your computer"}
             onChange={(e) => {
               setText(e.target.value);
               if (!e.target.value) keepDraft("");
