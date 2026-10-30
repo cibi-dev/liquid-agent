@@ -25,7 +25,10 @@ const TOOL_WORDS =
 /** Some templates leave the thinking in the text instead of reporting it separately. */
 function splitThink(text) {
   const m = text.match(/^\s*<think>([\s\S]*?)(?:<\/think>\s*|$)/);
-  return m ? { thought: m[1], rest: text.slice(m[0].length) } : { thought: "", rest: text };
+  if (m) return { thought: m[1], rest: text.slice(m[0].length) };
+  const orphan = text.match(/^([\s\S]*?)<\/think>\s*/);
+  if (orphan) return { thought: orphan[1], rest: text.slice(orphan[0].length) };
+  return { thought: "", rest: text };
 }
 
 const joinThoughts = (before, now) => [before, now.trim()].filter(Boolean).join("\n\n");
