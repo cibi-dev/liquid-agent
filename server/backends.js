@@ -567,7 +567,7 @@ class Backends {
         if (!server) return null;
         // Two slots of 16K each: Omni can hold a voice call and transcribe at the same time,
         // with room for thinking. Each request turns thinking on or off itself.
-        const args = ["--host", "127.0.0.1", "--port", port, "-c", "32768", "-np", "2", "--jinja", "-ngl", "99", "--reasoning", "auto", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0"];
+        const args = ["--host", "127.0.0.1", "--port", port, "-c", "32768", "-np", "2", "--jinja", "-ngl", "99", "--reasoning", "auto", "-ctk", "q8_0", "-ctv", "q8_0"];
         if (id === "small") args.push("-m", weights("small"), "--alias", "LFM3-1.7B");
         else args.push("-m", weights("omni"), "--mmproj", model(OMNI_PROJECTOR.file), "--alias", "LFM3-Omni-2B");
         return { cmd: server, args };
