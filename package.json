@@ -13,7 +13,7 @@
     "start": "node server/index.js --open",
     "serve": "node server/index.js",
     "dev": "vite build --watch --mode development & node --watch-path=server server/index.js",
-    "test": "node --test tests/**/*.js",
+    "test": "node --test tests/*.js",
     "typecheck": "tsc --noEmit -p web",
     "tauri": "tauri",
     "build:native": "vite build && tauri build",
