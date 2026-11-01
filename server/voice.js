@@ -266,6 +266,7 @@ export function handleVoice(client) {
       if (responding) up({ type: "response.cancel" });
       if (reply) {
         reply.interrupted = true;
+        send({ type: "audio.clear" });
         finishTurn("done");
       }
       state("listening");

@@ -191,7 +191,8 @@ const MAX_OUTPUT = 200_000;
 /** Runs a program; resolves with its output, rejects on a non-zero exit. */
 export function run(cmd, args, { cwd, env, timeout = 600_000, signal } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd, env: { ...process.env, ...env }, signal });
+    const isWindowsCmd = process.platform === "win32" && (cmd.endsWith(".cmd") || cmd.endsWith(".bat") || cmd === "npm" || cmd === "npx");
+    const child = spawn(cmd, args, { cwd, env: { ...process.env, ...env }, signal, shell: isWindowsCmd });
     let out = "";
     const add = (d) => {
       if (out.length < MAX_OUTPUT) out += d;
@@ -230,6 +231,8 @@ export function shell(command, { cwd, timeout = 60_000, signal } = {}) {
           "powershell.exe",
           [
             "-NoProfile",
+            "-NonInteractive",
+            "-NoLogo",
             "-ExecutionPolicy",
             "Bypass",
             "-Command",

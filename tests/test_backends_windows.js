@@ -131,3 +131,41 @@ test("5. Asset Selection & Compatibility", async (t) => {
     }
   });
 });
+
+test("6. Model Command Arguments & Optimization Flags", async (t) => {
+  const binaryName = process.platform === "win32" ? "llama-server.exe" : "llama-server";
+  const dummyBin = path.join(DIRS.engine, binaryName);
+  const createdDummy = !fs.existsSync(dummyBin);
+  if (createdDummy) {
+    fs.mkdirSync(DIRS.engine, { recursive: true });
+    fs.writeFileSync(dummyBin, "fake-binary");
+  }
+
+  try {
+    await t.test("small model includes --flash-attn, -b 2048, -t 6, -c 16384 -np 1", () => {
+      const spec = backends.command("small");
+      assert.ok(spec, "small model spec must exist");
+      assert.ok(spec.args.includes("--flash-attn"), "Must include --flash-attn");
+      assert.ok(spec.args.includes("-b") && spec.args[spec.args.indexOf("-b") + 1] === "2048");
+      assert.ok(spec.args.includes("-ub") && spec.args[spec.args.indexOf("-ub") + 1] === "512");
+      assert.ok(spec.args.includes("-t") && spec.args[spec.args.indexOf("-t") + 1] === "6");
+      assert.ok(spec.args.includes("-c") && spec.args[spec.args.indexOf("-c") + 1] === "16384");
+      assert.ok(spec.args.includes("-np") && spec.args[spec.args.indexOf("-np") + 1] === "1");
+    });
+
+    await t.test("omni model includes --flash-attn, -b 2048, -t 6, -c 32768 -np 2", () => {
+      const spec = backends.command("omni");
+      assert.ok(spec, "omni model spec must exist");
+      assert.ok(spec.args.includes("--flash-attn"), "Must include --flash-attn");
+      assert.ok(spec.args.includes("-b") && spec.args[spec.args.indexOf("-b") + 1] === "2048");
+      assert.ok(spec.args.includes("-ub") && spec.args[spec.args.indexOf("-ub") + 1] === "512");
+      assert.ok(spec.args.includes("-t") && spec.args[spec.args.indexOf("-t") + 1] === "6");
+      assert.ok(spec.args.includes("-c") && spec.args[spec.args.indexOf("-c") + 1] === "32768");
+      assert.ok(spec.args.includes("-np") && spec.args[spec.args.indexOf("-np") + 1] === "2");
+    });
+  } finally {
+    if (createdDummy) {
+      try { fs.rmSync(dummyBin, { force: true }); } catch {}
+    }
+  }
+});

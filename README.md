@@ -1,9 +1,11 @@
-# Liquid Agent
+# Liquid Agent (Windows 11 & macOS)
 
-A private AI agent for your Mac that runs **LFM3 1.7B** and **LFM3 Omni 2B** entirely on your computer, with a clean web interface in your browser.
+> 🌟 **Windows 11 Port & Hardware Optimization**: This project is an open-source community port based on [Liquid Agent](https://github.com/morriszdweck/liquid-agent) created by [Morris Dweck](https://github.com/morriszdweck). All original architecture, prompting, and base system design are credit of Morris Dweck and Liquid AI.
+
+A private AI agent that runs **LFM3 1.7B** and **LFM3 Omni 2B** entirely on your computer, with native desktop integration (Tauri 2.0 / Rust) and a clean web interface in your browser.
 
 - **Chat** with full Markdown: tables, code with highlighting and copy buttons, math, task lists.
-- **Does things on your Mac**: runs commands, reads and writes files, searches and reads the web, opens apps and links, sets reminders, uses the clipboard, and clicks around websites with [Betterwright](https://www.npmjs.com/package/betterwright).
+- **Does things on your computer**: runs commands (PowerShell / zsh), reads and writes files, searches and reads the web, opens apps and links, sets reminders, uses the clipboard, and clicks around websites with [Betterwright](https://www.npmjs.com/package/betterwright).
 - **Voice chat** with LFM3 Omni 2B: it listens, thinks and talks back in one model. Talk over it to interrupt.
 - **Omni where it matters**: dictation, reading answers aloud, pictures, audio and your screen all go through LFM3 Omni 2B. Everyday text and documents go to LFM3 1.7B. The app picks the model for you.
 - **Thinks first**: LFM3 1.7B reasons before it answers (turn it off with **Think** under the message box). LFM3 Omni 2B is a non-reasoning model, so pictures and audio are answered right away.
@@ -12,9 +14,29 @@ A private AI agent for your Mac that runs **LFM3 1.7B** and **LFM3 Omni 2B** ent
 - **Routines** you can run with one click or on a schedule, and an **Activity** log of every action and who approved it.
 - **One-click downloads** inside the app, with a choice of model size (Smaller, Balanced, Best, or any GGUF quant in Settings). No model picker: it routes each message itself.
 
-Everything stays on your Mac. The only network traffic is the one-time downloads and web searches you ask for.
+Everything stays on your computer. The only network traffic is the one-time downloads and web searches you ask for.
 
 ## Install
+
+### Windows 11 / 10 (x64) 🪟
+
+**Option A: One-Line PowerShell Install**
+Paste this into PowerShell:
+```powershell
+irm https://raw.githubusercontent.com/cibi-dev/liquid-agent/main/install.ps1 | iex
+```
+
+**Option B: Standalone Native Desktop App (Tauri 2.0 / Rust)**
+Download **`Liquid-Agent-Windows-x64.zip`** from [Releases](https://github.com/cibi-dev/liquid-agent/releases) for a dedicated desktop window with System Tray (<40 MB RAM, GPU accelerated).
+
+**Option C: From Git clone**
+Double-click `Liquid Agent.bat`, or run:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start.ps1
+```
+*(See [README-WINDOWS.md](README-WINDOWS.md) for full Windows 11 architecture details).*
+
+### macOS (Apple Silicon) 🍎
 
 Paste this into Terminal:
 

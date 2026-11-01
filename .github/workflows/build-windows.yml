@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]
     paths:
       - 'src-tauri/**'
       - 'web/**'
@@ -67,3 +68,21 @@ jobs:
           name: Liquid-Agent-Windows-x64
           path: dist-native/*
           if-no-files-found: error
+
+      - name: Compress Release Archive
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist-native/* -DestinationPath "Liquid-Agent-Windows-x64.zip" -Force
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Liquid-Agent-Windows-x64.zip
+            dist-native/Liquid Agent.exe
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

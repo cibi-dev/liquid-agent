@@ -35,9 +35,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $candidates = @(
-    Join-Path $projectRoot "src-tauri\target\release\liquid-agent.exe",
-    Join-Path $projectRoot "src-tauri\target\release\Liquid Agent.exe",
-    Join-Path $projectRoot "src-tauri\target\release\app.exe"
+    (Join-Path $projectRoot "src-tauri\target\release\liquid-agent.exe"),
+    (Join-Path $projectRoot "src-tauri\target\release\Liquid Agent.exe"),
+    (Join-Path $projectRoot "src-tauri\target\release\app.exe")
 )
 
 $found = $null

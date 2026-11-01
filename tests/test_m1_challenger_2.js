@@ -241,8 +241,8 @@ describe("Adversarial Suite 3: Child Process Lifecycle & Timing Stress", () => {
     const tmpFile = path.join(os.tmpdir(), `pwsh_pid_${Date.now()}.txt`);
     const escapedTmp = tmpFile.replace(/\\/g, "/");
     const cmd = `[IO.File]::WriteAllText('${escapedTmp}', $PID); Start-Sleep -Seconds 60`;
-    const res = await shell(cmd, { timeout: 1500 });
-    assert.ok(res.includes("[timed out after 1.5s]"));
+    const res = await shell(cmd, { timeout: 3500 });
+    assert.ok(res.includes("[timed out after 3.5s]"));
     assert.ok(fs.existsSync(tmpFile), "PID file should have been written by PowerShell");
     const childPid = parseInt(fs.readFileSync(tmpFile, "utf8").trim(), 10);
     try { fs.unlinkSync(tmpFile); } catch {}

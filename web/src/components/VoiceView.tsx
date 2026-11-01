@@ -77,7 +77,7 @@ export function VoiceView({ chatId }: { chatId?: string }) {
     };
     ws.onmessage = async (event) => {
       if (event.data instanceof ArrayBuffer) {
-        s.player?.push(event.data);
+        if (!streaming) s.player?.push(event.data);
         return;
       }
       const msg = JSON.parse(event.data);
@@ -135,6 +135,9 @@ export function VoiceView({ chatId }: { chatId?: string }) {
         case "tool":
           setTool({ label: msg.label, status: msg.status });
           if (msg.status !== "pending" && msg.status !== "running" && msg.status !== "approval") setTimeout(() => setTool(null), 2500);
+          break;
+        case "audio.clear":
+          s.player?.flush();
           break;
         case "turn.done":
           streaming = false;

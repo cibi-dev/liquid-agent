@@ -78,6 +78,22 @@ export async function unpackArchive(archivePath, destDir, { signal } = {}) {
   }
 }
 
+/** Detects the available GPU on Windows (cuda, vulkan, or cpu) */
+export async function detectWindowsGPU() {
+  if (process.platform !== "win32") return "other";
+  try {
+    const stdout = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-NoLogo", "-Command", "(Get-CimInstance Win32_VideoController).Name"], { timeout: 3000 });
+    const lower = (stdout || "").toLowerCase();
+    if (lower.includes("nvidia") || lower.includes("geforce") || lower.includes("rtx") || lower.includes("gtx") || lower.includes("quadro")) {
+      return "cuda";
+    }
+    if (lower.includes("amd") || lower.includes("radeon") || lower.includes("intel") || lower.includes("arc")) {
+      return "vulkan";
+    }
+  } catch {}
+  return "cpu";
+}
+
 /** Finds the llama-server inside the app's own engine folder. */
 export function findEngine() {
   const binaryName = process.platform === "win32" ? "llama-server.exe" : "llama-server";
@@ -360,13 +376,22 @@ class Backends {
     let cudartAsset = null;
 
     if (process.platform === "win32") {
-      // Prioritize CUDA 13.4 / 12.4 for NVIDIA RTX GPUs, then Vulkan, then CPU
+      const gpu = await detectWindowsGPU();
       const isBin = (a) => !a.name.startsWith("cudart");
-      mainAsset = allAssets.find((a) => isBin(a) && a.name.includes("bin-win-cuda-13.4-x64.zip")) ||
-                  allAssets.find((a) => isBin(a) && a.name.includes("bin-win-cuda-12.4-x64.zip")) ||
-                  allAssets.find((a) => isBin(a) && a.name.includes("bin-win-cuda") && a.name.endsWith("x64.zip")) ||
-                  allAssets.find((a) => isBin(a) && a.name.includes("bin-win-vulkan-x64.zip")) ||
-                  allAssets.find((a) => isBin(a) && a.name.includes("bin-win-cpu-x64.zip"));
+      if (gpu === "vulkan") {
+        mainAsset = allAssets.find((a) => isBin(a) && a.name.includes("bin-win-vulkan-x64.zip")) ||
+                    allAssets.find((a) => isBin(a) && a.name.includes("bin-win-cpu-x64.zip"));
+      } else if (gpu === "cpu") {
+        mainAsset = allAssets.find((a) => isBin(a) && a.name.includes("bin-win-cpu-x64.zip")) ||
+                    allAssets.find((a) => isBin(a) && a.name.includes("bin-win-vulkan-x64.zip"));
+      } else {
+        // Prioritize CUDA 13.4 / 12.4 for NVIDIA RTX GPUs, then Vulkan, then CPU
+        mainAsset = allAssets.find((a) => isBin(a) && a.name.includes("bin-win-cuda-13.4-x64.zip")) ||
+                    allAssets.find((a) => isBin(a) && a.name.includes("bin-win-cuda-12.4-x64.zip")) ||
+                    allAssets.find((a) => isBin(a) && a.name.includes("bin-win-cuda") && a.name.endsWith("x64.zip")) ||
+                    allAssets.find((a) => isBin(a) && a.name.includes("bin-win-vulkan-x64.zip")) ||
+                    allAssets.find((a) => isBin(a) && a.name.includes("bin-win-cpu-x64.zip"));
+      }
 
       if (mainAsset && mainAsset.name.includes("cuda")) {
         const cudaVer = mainAsset.name.includes("13.4") ? "13.4" : "12.4";
@@ -561,15 +586,49 @@ class Backends {
   command(id) {
     const port = String(PARTS[id].port);
     switch (id) {
-      case "small":
+      case "small": {
+        const server = findEngine();
+        if (!server) return null;
+        const args = [
+          "--host", "127.0.0.1", "--port", port,
+          "-c", "16384",
+          "-np", "1",
+          "--jinja",
+          "-ngl", "99",
+          "--flash-attn",
+          "-b", "2048",
+          "-ub", "512",
+          "-t", "6",
+          "--reasoning", "auto",
+          "-ctk", "q8_0",
+          "-ctv", "q8_0",
+          "-m", weights("small"),
+          "--alias", "LFM3-1.7B",
+        ];
+        return { cmd: server, args };
+      }
       case "omni": {
         const server = findEngine();
         if (!server) return null;
         // Two slots of 16K each: Omni can hold a voice call and transcribe at the same time,
-        // with room for thinking. Each request turns thinking on or off itself.
-        const args = ["--host", "127.0.0.1", "--port", port, "-c", "32768", "-np", "2", "--jinja", "-ngl", "99", "--reasoning", "auto", "-ctk", "q8_0", "-ctv", "q8_0"];
-        if (id === "small") args.push("-m", weights("small"), "--alias", "LFM3-1.7B");
-        else args.push("-m", weights("omni"), "--mmproj", model(OMNI_PROJECTOR.file), "--alias", "LFM3-Omni-2B");
+        // with room for thinking and multimodal context without exceeding 8 GB VRAM.
+        const args = [
+          "--host", "127.0.0.1", "--port", port,
+          "-c", "32768",
+          "-np", "2",
+          "--jinja",
+          "-ngl", "99",
+          "--flash-attn",
+          "-b", "2048",
+          "-ub", "512",
+          "-t", "6",
+          "--reasoning", "auto",
+          "-ctk", "q8_0",
+          "-ctv", "q8_0",
+          "-m", weights("omni"),
+          "--mmproj", model(OMNI_PROJECTOR.file),
+          "--alias", "LFM3-Omni-2B",
+        ];
         return { cmd: server, args };
       }
       case "guardian":

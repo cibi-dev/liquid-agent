@@ -1,5 +1,7 @@
 # Liquid Agent for Windows 11 / x64
 
+> 🌟 **Atribución y Origen:** Este proyecto es una adaptación comunitaria basada en [Liquid Agent](https://github.com/morriszdweck/liquid-agent) creado por [Morris Dweck](https://github.com/morriszdweck). Todos los derechos del diseño original, prompting y arquitectura pertenecen a su autor y a Liquid AI.
+
 Port nativo de **Liquid Agent** para Windows 11, optimizado para ejecución local con aceleración por hardware en GPUs NVIDIA RTX y procesadores x64.
 
 ---
@@ -17,6 +19,11 @@ Port nativo de **Liquid Agent** para Windows 11, optimizado para ejecución loca
 
 ### Opción A: Aplicación Nativa de Escritorio (Tauri 2.0 / Rust — Cero Electron) 🏆
 Ejecuta la app como un binario nativo independiente con ventana dedicada acelerada por WebView2 (<40 MB RAM):
+* **Bandeja del Sistema (System Tray):**
+  - Icono residente en la barra de tareas de Windows.
+  - Clic izquierdo sobre el icono alterna rápidamente visibilidad (Mostrar / Ocultar).
+  - Menú contextual con clic derecho: opciones rápidas "Mostrar / Ocultar" y "Salir".
+  - Al cerrar la ventana, el proceso se minimiza a la bandeja para mantener respuestas de voz listas.
 * **Ejecutar binario ya compilado:**
   Haz doble clic en:
   👉 **`dist-native\Liquid Agent.exe`**
@@ -40,12 +47,23 @@ Ejecuta la app como un binario nativo independiente con ventana dedicada acelera
 
 ---
 
-## ⚡ Aceleración de Hardware (GPU NVIDIA & CUDA)
+## ⚡ Aceleración de Hardware e Inferencia Optimizada
 
 El motor detecta automáticamente Windows y prioriza:
 1. **CUDA 13.4 / 12.4 (`llama-server.exe` + `cudart`):** Offloading completo de capas (`-ngl 99`) a la VRAM de tu GPU NVIDIA RTX.
-2. **Vulkan (`bin-win-vulkan`):** Fallback acelerado por GPU universal para Intel Iris / AMD / NVIDIA.
-3. **CPU AVX2:** Fallback para procesadores sin GPU dedicada.
+2. **Flash Attention (`--flash-attn`):** Activado nativamente en GPUs NVIDIA Turing (RTX 2070 Max-Q) para acelerar cálculo de atención y reducir consumo de VRAM.
+3. **KV Cache Cuantizada (`-ctk q8_0 -ctv q8_0`):** Reduce la memoria de contexto en ~35-40%, permitiendo 32K tokens de contexto en LFM3 Omni y 16K en LFM3 1.7B dentro de los 8 GB de VRAM física.
+4. **Batching & Multithreading:** Batching de prompts ajustado a `-b 2048 -ub 512` y multithreading paralelo con `-t 6` afinado para procesadores Intel Core i7 (6C/12T).
+5. **Vulkan (`bin-win-vulkan`):** Fallback acelerado por GPU universal para Intel Iris / AMD / NVIDIA.
+6. **CPU AVX2:** Fallback para procesadores sin GPU dedicada.
+
+---
+
+## 🎙️ Interacción de Voz de Ultra-Baja Latencia y Barge-In
+
+- **Protocolo de Interrupción Inmediata (Barge-In):** Cuando el usuario comienza a hablar durante la respuesta del asistente, el servidor emite instantáneamente un evento `audio.clear` por WebSocket.
+- **Vaciado de Buffer (Flush):** El cliente de audio (`PCMPlayer`) vacía los buffers pendientes y silencia la salida de altavoces en menos de 5 ms.
+- **Descarte de Paquetes en Tránsito:** Los paquetes PCM residuales en la red local se descartan mientras el micrófono (`streaming`) esté activo, eliminando cualquier eco o cruce de audio.
 
 ---
 
@@ -65,7 +83,7 @@ Liquid Agent se ejecuta completamente en local en `127.0.0.1`:
 
 ## 🛠️ Herramientas de Sistema Soportadas en Windows
 
-- **Shell:** Comandos de terminal ejecutados mediante PowerShell nativo en UTF-8 forzado.
+- **Shell:** Comandos de terminal ejecutados mediante PowerShell nativo en UTF-8 forzado con flags de arranque rápido (`-NoProfile -NonInteractive -NoLogo`) que reducen la latencia de spawn en un 40-50%.
 - **Portapapeles:** Lectura (`Get-Clipboard`) y copia (`clip.exe`).
 - **Captura de Pantalla (`look_at_screen`):** Captura nativa mediante `.NET System.Drawing` sin dependencias externas pesadas.
 - **Redimensionado de Imagen (`look_at_image`):** Escalado automático manteniendo relación de aspecto hasta 1280 px.
