@@ -109,3 +109,108 @@ node --test tests/test_tools_windows.js
 # Test de motores y backends
 node --test tests/test_backends_windows.js
 ```
+
+---
+
+## 🔧 Troubleshooting (Windows)
+
+Guía de los fallos que ya se diagnosticaron en este port. Léela **antes** de recompilar o de mover el proyecto de carpeta: casi todos los síntomas raros de arranque vinieron de la misma causa ambiental.
+
+### 1. La app "abre y se cierra" (código `0xC0000142`, sin ventana)
+
+**Causa más probable: la carpeta del proyecto tiene etiqueta de integridad `Low`.**
+
+Windows propaga la etiqueta de integridad de un directorio a los `.exe` que contiene, y los ejecuta con un token de baja integridad. `Liquid Agent.exe` arranca entonces en *Low IL* y el proceso de WebView2 no puede escribir en `%LOCALAPPDATA%` (que es *Medium*), así que muere en silencio y la ventana nunca aparece.
+
+Comprobar la etiqueta:
+
+```powershell
+icacls "C:\Users\admin\Proyectos" | Select-String "Mandatory"
+# MAL:  Mandatory Label\Low Mandatory Level
+# BIEN: Mandatory Label\Medium Mandatory Level
+```
+
+Corregirla (propaga a todos los archivos, tarda un rato en carpetas grandes):
+
+```powershell
+icacls "C:\Users\admin\Proyectos" /setintegritylevel (OI)(CI)M /T /C
+```
+
+Verificar además que el `.exe` corre en *Medium*: abre la app y en PowerShell compara con otra copia fuera de esa carpeta. Si el nivel es `S-1-16-4096` es *Low*; `S-1-16-8192` es *Medium* (correcto).
+
+> Regla práctica: una carpeta con etiqueta `Low` **solo** deja funcionar WebView2 si el perfil de usuario también está en `Low`. Eso es un síntoma, no una solución. Lo correcto es volver a `Medium`.
+
+### 2. `WebView2 error: HRESULT(0x8000FFFF) "Catastrophic failure"` o `0x800700AA "The requested resource is in use."`
+
+**Causa: perfil de WebView2 corrupto o bloqueado.** Borra el perfil y deja que se regenere:
+
+```powershell
+Get-Process "Liquid Agent","msedgewebview2" -ErrorAction SilentlyContinue | Stop-Process -Force
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\com.liquidagent.desktop" -ErrorAction SilentlyContinue
+```
+
+No copies un perfil `EBWebView` de una sesión anterior: si lo restauras, reaparece `0x800700AA` porque el perfil queda marcado como "en uso".
+
+### 3. El `.exe` está compilado con MinGW/GNU en lugar de MSVC
+
+Tauri 2 en Windows necesita MSVC. Un binario GNU depende de `msvcrt.dll` y de un `WebView2Loader.dll` externo, y falla al arrancar.
+
+```powershell
+# Comprobar las DLLs que importa el binario
+objdump -p "dist-native\Liquid Agent.exe" | Select-String "DLL Name"
+```
+
+Un binario MSVC correcto solo importa DLLs del sistema (`KERNEL32.dll`, `USER32.dll`, `api-ms-win-*`, `ucrtbase.dll`). Si aparecen `msvcrt.dll` o `WebView2Loader.dll`, está mal compilado.
+
+### 4. `could not execute rustc` / errores de `indexmap` al compilar
+
+**Causa: `PATH` contaminado por toolchains MinGW (Strawberry Perl, Git for Windows).** Cargo elige el linker equivocado y falla con errores que parecen del código.
+
+Compila con un `PATH` limpio y la toolchain MSVC:
+
+```powershell
+Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue
+$env:PATH = "C:\Users\admin\.cargo\bin;C:\Program Files\nodejs;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem"
+cargo build --release --manifest-path src-tauri\Cargo.toml
+```
+
+Si quieres asegurarte de la toolchain por defecto:
+
+```powershell
+rustup default stable-x86_64-pc-windows-msvc
+rustup show
+```
+
+### 5. `npm run build` falla con `Access is denied` desde esbuild
+
+Es el mismo efecto de la etiqueta `Low` (punto 1): esbuild intenta escribir en `%TEMP%`, que es una carpeta *Medium*. Corrige la etiqueta de integridad de la carpeta del proyecto y vuelve a intentarlo; no hace falta parchear `node_modules`.
+
+### 6. `llama-server` muere con `unknown value for --flash-attn: '-b'`
+
+Las builds actuales de `llama-server` cambiaron `--flash-attn` de *flag booleano* a *opción con valor*. Un `--flash-attn` suelto consume el argumento siguiente (`-b`). El código ya pasa `-fa auto`; si ves este error en una copia antigua, actualiza `server/backends.js`.
+
+### 7. SmartScreen bloquea el arranque ("Windows protegió tu PC")
+
+El binario no está firmado. Pulsa **"Más información" → "Ejecutar de todas formas"**. Para evitar el aviso en desarrollo, ejecútalo desde PowerShell o añade la carpeta a las exclusiones de Defender.
+
+### 8. Dónde mirar los logs
+
+| Qué | Ruta |
+|---|---|
+| Logs de la app | `%LOCALAPPDATA%\LiquidAgent\logs` |
+| Datos / modelos / configuración | `%LOCALAPPDATA%\LiquidAgent` |
+| Volcados de fallo (WebView2) | `%LOCALAPPDATA%\CrashDumps` |
+| Eventos de aplicación | Visor de eventos → Registros de Windows → Aplicación |
+| Perfil de WebView2 | `%LOCALAPPDATA%\com.liquidagent.desktop\EBWebView` |
+
+Comando rápido para el volcado más reciente:
+
+```powershell
+Get-ChildItem "$env:LOCALAPPDATA\CrashDumps" | Sort-Object LastWriteTime -Descending | Select-Object -First 5
+Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddMinutes(-30)} |
+  Where-Object { $_.Message -match 'Liquid|msedgewebview2' } | Select-Object -First 5
+```
+
+### 9. La ventana se cierra y no queda en la bandeja
+
+El `CloseRequested` de `src-tauri/src/lib.rs` llama actualmente a `app.exit(0)`, así que cerrar la ventana termina también el servidor. Para que quede residente en la bandeja hay que interceptar el evento, ocultar la ventana y salir solo desde el menú **"Salir"** (pendiente, ver handoff).
