@@ -7,3 +7,6 @@ guardian/.venv/
 bridge/node_modules/
 __pycache__/
 .DS_Store
+
+# Agent / tool configs
+.commandcode/
