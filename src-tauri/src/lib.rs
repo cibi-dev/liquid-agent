@@ -163,15 +163,31 @@ fn start_server(app_handle: &tauri::AppHandle) -> (Option<Child>, Option<JobGuar
 
     log::info!("Starting Liquid Agent server in {:?}", server_dir);
 
+    // Look for bundled node executable first (e.g. bin/node.exe or node.exe next to the app)
+    let node_bin_candidates = vec![
+        server_dir.join("bin").join(if cfg!(windows) { "node.exe" } else { "node" }),
+        server_dir.join("node").join(if cfg!(windows) { "node.exe" } else { "node" }),
+        server_dir.join(if cfg!(windows) { "node.exe" } else { "node" }),
+    ];
+
+    let mut node_cmd = "node".to_string();
+    for cand in &node_bin_candidates {
+        if cand.exists() {
+            node_cmd = cand.to_string_lossy().to_string();
+            log::info!("Using bundled Node.js runtime at {:?}", cand);
+            break;
+        }
+    }
+
     #[cfg(windows)]
-    let mut cmd = Command::new("node");
+    let mut cmd = Command::new(&node_cmd);
     cmd.arg("server/index.js");
     cmd.current_dir(&server_dir);
     cmd.env("LIQUID_AGENT_ACTIVE", "1");
     cmd.creation_flags(CREATE_NO_WINDOW);
 
     #[cfg(not(windows))]
-    let mut cmd = Command::new("node");
+    let mut cmd = Command::new(&node_cmd);
     cmd.arg("server/index.js");
     cmd.current_dir(&server_dir);
     cmd.env("LIQUID_AGENT_ACTIVE", "1");
@@ -221,11 +237,9 @@ fn stop_server(child_arc: &Arc<Mutex<Option<Child>>>, job_arc: &Arc<Mutex<Option
 pub fn run() {
     let server_child: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
     let server_child_clone = server_child.clone();
-    let server_child_on_close = server_child.clone();
 
     let job_guard: Arc<Mutex<Option<JobGuard>>> = Arc::new(Mutex::new(None));
     let job_guard_clone = job_guard.clone();
-    let job_guard_on_close = job_guard.clone();
 
     tauri::Builder::default()
         .manage(ServerState {
@@ -318,10 +332,9 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(move |window, event| {
-            if let WindowEvent::CloseRequested { .. } = event {
-                stop_server(&server_child_on_close, &job_guard_on_close);
-                let app = window.app_handle();
-                app.exit(0);
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
             }
         })
         .build(tauri::generate_context!())

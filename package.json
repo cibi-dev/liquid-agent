@@ -1,6 +1,6 @@
 {
   "name": "liquid-agent",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "description": "A private AI agent for your computer that runs LFM3 1.7B and LFM3 Omni 2B locally, with a web UI.",

@@ -54,29 +54,51 @@ jobs:
       - name: Package Distributable Binaries
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "dist-native"
+          $distDir = "dist-native"
+          $packageDir = "$distDir/Liquid-Agent"
+          New-Item -ItemType Directory -Force -Path $packageDir
+          New-Item -ItemType Directory -Force -Path "$packageDir/bin"
+          New-Item -ItemType Directory -Force -Path "$packageDir/node_modules"
+
+          # 1. Native Executable
           if (Test-Path "src-tauri/target/release/Liquid Agent.exe") {
-            Copy-Item "src-tauri/target/release/Liquid Agent.exe" "dist-native/"
+            Copy-Item "src-tauri/target/release/Liquid Agent.exe" "$packageDir/"
+            Copy-Item "src-tauri/target/release/Liquid Agent.exe" "$distDir/"
           } elseif (Test-Path "src-tauri/target/release/liquid-agent.exe") {
-            Copy-Item "src-tauri/target/release/liquid-agent.exe" "dist-native/Liquid Agent.exe"
+            Copy-Item "src-tauri/target/release/liquid-agent.exe" "$packageDir/Liquid Agent.exe"
+            Copy-Item "src-tauri/target/release/liquid-agent.exe" "$distDir/Liquid Agent.exe"
           }
-          if (Test-Path "src-tauri/target/release/WebView2Loader.dll") {
-            Copy-Item "src-tauri/target/release/WebView2Loader.dll" "dist-native/"
+
+          # 2. Server & Web UI
+          Copy-Item -Recurse -Force "server" "$packageDir/"
+          if (-not (Test-Path "$packageDir/web")) {
+            New-Item -ItemType Directory -Force -Path "$packageDir/web"
           }
-          Get-ChildItem -Path "dist-native"
+          Copy-Item -Recurse -Force "web/dist" "$packageDir/web/dist"
+          Copy-Item -Force "package.json" "$packageDir/"
+          if (Test-Path "node_modules/ws") {
+            Copy-Item -Recurse -Force "node_modules/ws" "$packageDir/node_modules/"
+          }
+
+          # 3. Download Portable Node.js Runtime (v22.14.0 LTS x64)
+          Write-Host "Downloading portable Node.js runtime for standalone package..."
+          Invoke-WebRequest -Uri "https://nodejs.org/dist/v22.14.0/win-x64/node.exe" -OutFile "$packageDir/bin/node.exe"
+
+          Get-ChildItem -Path $distDir
+          Get-ChildItem -Path $packageDir
 
       - name: Upload Native Windows Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Liquid-Agent-Windows-x64
-          path: dist-native/*
+          path: dist-native/Liquid-Agent/*
           if-no-files-found: error
 
       - name: Compress Release Archive
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: |
-          Compress-Archive -Path dist-native/* -DestinationPath "Liquid-Agent-Windows-x64.zip" -Force
+          Compress-Archive -Path dist-native/Liquid-Agent -DestinationPath "Liquid-Agent-Windows-x64.zip" -Force
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
